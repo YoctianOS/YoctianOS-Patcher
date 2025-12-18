@@ -1,0 +1,11 @@
+--- a/kiauh/core/menus/base_menu.py
++++ b/kiauh/core/menus/base_menu.py
+@@ -31,7 +31,7 @@
+ 
+ def print_header() -> None:
+     line1 = " [ KIAUH ] "
+-    line2 = "Klipper Installation And Update Helper"
++    line2 = "Klipper Installation And Update Helper - YoctianOS" 
+     line3 = ""
+     color = Color.CYAN
+     count = 62 - len(str(color)) - len(str(Color.RST))
