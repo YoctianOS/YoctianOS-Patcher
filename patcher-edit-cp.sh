@@ -22,6 +22,12 @@ for src in *; do
         continue
     fi
 
+    # Skip README.txt (case-insensitive)
+    if [[ "${src,,}" == "readme.txt" ]]; then
+        echo "Skipping README: '$src'"
+        continue
+    fi
+
     dest="${src}.backup"
 
     # If destination already exists, skip copying
