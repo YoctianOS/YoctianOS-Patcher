@@ -56,6 +56,16 @@ for project in "$EDIT_BASE"/*; do
   [ -d "$project" ] || continue
   project_name=$(basename "$project")
 
+  # Skip projects that are backups or have a sibling .backup directory
+  if [[ "$project_name" == *.backup ]]; then
+    echo "Skipping project '$project_name' because it is a .backup directory."
+    continue
+  fi
+  if [ -d "$EDIT_BASE/${project_name}.backup" ]; then
+    echo "Skipping project '$project_name' because sibling '${project_name}.backup' exists."
+    continue
+  fi
+
   GIT_DIR="$GIT_BASE/$project_name"
   EDIT_DIR="$EDIT_BASE/$project_name"
   OUTPUT_DIR="$OUTPUT_BASE/$project_name"
@@ -68,7 +78,7 @@ for project in "$EDIT_BASE"/*; do
   mkdir -p "$OUTPUT_DIR"
   echo "Processing project: $project_name"
 
-  # Walk through all files in EDIT_DIR safely
+  # Walk through all files in EDIT_DIR (no .git or README blacklist)
   while IFS= read -r -d '' edit_file; do
     rel_path="${edit_file#$EDIT_DIR/}"
     repo_file="$GIT_DIR/$rel_path"
@@ -148,11 +158,12 @@ for project in "$EDIT_BASE"/*; do
   echo
 done
 
-# Detect files present in git but missing in edit and create delete patches
-echo "Scanning for files present in git but missing in edit (will create delete patches)..."
+# Detect files present in git but missing in edit and create delete patches only if MARK_OUT present
+echo "Scanning for files present in git but missing in edit (will create delete patches only if MARK_OUT present)..."
 for project in "$GIT_BASE"/*; do
   [ -d "$project" ] || continue
   project_name=$(basename "$project")
+
   GIT_DIR="$GIT_BASE/$project_name"
   EDIT_DIR="$EDIT_BASE/$project_name"
   OUTPUT_DIR="$OUTPUT_BASE/$project_name"
@@ -162,14 +173,19 @@ for project in "$GIT_BASE"/*; do
     rel_path="${git_file#$GIT_DIR/}"
     edit_file="$EDIT_DIR/$rel_path"
     if [ ! -f "$edit_file" ]; then
-      if ! is_text_file "$git_file"; then
-        echo "SKIP binary-only-in-git: $project_name/$rel_path"
-        continue
+      # Only create a delete patch if the git file contains the MARK_OUT marker
+      if grep -qF -- "$MARK_OUT" "$git_file" 2>/dev/null; then
+        if ! is_text_file "$git_file"; then
+          echo "SKIP binary-only-in-git: $project_name/$rel_path"
+          continue
+        fi
+        patch_name="$(sanitize "$rel_path").patch"
+        mkdir -p "$(dirname "$OUTPUT_DIR/$patch_name")"
+        diff -u --label "a/$rel_path" --label "b/$rel_path" -- "$git_file" /dev/null > "$OUTPUT_DIR/$patch_name"
+        echo "Patch (delete) created: $OUTPUT_DIR/$patch_name"
+      else
+        echo "Skipping delete patch for $project_name/$rel_path (no $MARK_OUT in git file)"
       fi
-      patch_name="$(sanitize "$rel_path").patch"
-      mkdir -p "$(dirname "$OUTPUT_DIR/$patch_name")"
-      diff -u --label "a/$rel_path" --label "b/$rel_path" -- "$git_file" /dev/null > "$OUTPUT_DIR/$patch_name"
-      echo "Patch (delete) created: $OUTPUT_DIR/$patch_name"
     fi
   done < <(find "$GIT_DIR" -type f -print0)
 done
