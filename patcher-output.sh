@@ -56,6 +56,18 @@ for project in "$EDIT_BASE"/*; do
   [ -d "$project" ] || continue
   project_name=$(basename "$project")
 
+  # NEW: skip projects that are backups or have a sibling .backup directory
+  # Skip if the project itself ends with .backup
+  if [[ "$project_name" == *.backup ]]; then
+    echo "Skipping project '$project_name' because it is a .backup directory."
+    continue
+  fi
+  # Skip if a sibling backup directory exists (e.g., ./edit/foo.backup)
+  if [ -d "$EDIT_BASE/${project_name}.backup" ]; then
+    echo "Skipping project '$project_name' because sibling '${project_name}.backup' exists."
+    continue
+  fi
+
   GIT_DIR="$GIT_BASE/$project_name"
   EDIT_DIR="$EDIT_BASE/$project_name"
   OUTPUT_DIR="$OUTPUT_BASE/$project_name"
