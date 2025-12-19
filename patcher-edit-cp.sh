@@ -30,17 +30,17 @@ for src in *; do
 
     dest="${src}.backup"
 
-    # If destination already exists, skip copying
+    # If destination already exists, skip moving
     if [ -e "$dest" ]; then
         echo "Skipping '$src' — backup already exists ('$dest')"
         continue
     fi
 
-    # Copy preserving attributes; handle files and directories
-    if cp -a -- "$src" "$dest"; then
-        echo "Backed up '$src' -> '$dest'"
+    # Move (rename) file or directory to .backup
+    if mv -- "$src" "$dest"; then
+        echo "Moved '$src' -> '$dest'"
     else
-        echo "Failed to back up '$src'"
+        echo "Failed to move '$src'"
     fi
 done
 
