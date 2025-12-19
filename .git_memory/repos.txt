@@ -1,1 +1,3 @@
 https://github.com/dw-0/kiauh.git
+https://github.com/Klipper3d/klipper.git
+https://github.com/KlipperScreen/KlipperScreen.git

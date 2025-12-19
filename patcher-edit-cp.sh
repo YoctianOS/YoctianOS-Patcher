@@ -8,6 +8,7 @@ fi
 
 # Base directory
 EDIT_BASE="./edit"
+MARK_OUT="##edit-out##"
 
 # Go to base directory
 cd "$EDIT_BASE" || { echo "Directory $EDIT_BASE not found"; exit 1; }
@@ -36,11 +37,24 @@ for src in *; do
         continue
     fi
 
-    # Move (rename) file or directory to .backup
-    if mv -- "$src" "$dest"; then
-        echo "Moved '$src' -> '$dest'"
+    if [ -f "$src" ]; then
+        # Check if file contains at least one MARK_OUT
+        if grep -qF "$MARK_OUT" "$src"; then
+            if mv -- "$src" "$dest"; then
+                echo "Moved '$src' -> '$dest'"
+            else
+                echo "Failed to move '$src'"
+            fi
+        else
+            echo "Refused '$src' — no $MARK_OUT found"
+        fi
     else
-        echo "Failed to move '$src'"
+        # For directories, just move
+        if mv -- "$src" "$dest"; then
+            echo "Moved directory '$src' -> '$dest'"
+        else
+            echo "Failed to move directory '$src'"
+        fi
     fi
 done
 
