@@ -184,4 +184,4 @@ for dir in "${DIRS[@]}"; do
   rm -rf "$dir" && echo "REMOVED DIR: $dir" || echo "FAILED REMOVE DIR: $dir"
 done
 
-echo "Done. Files that originally contained $MARK_IN or $MARK_OUT (and those that had both), are preserved under $EDIT_ROOT_REAL."
+echo "Done. Files that originally contained $MARK_IN or $MARK_OUT, are preserved under $EDIT_ROOT_REAL."
