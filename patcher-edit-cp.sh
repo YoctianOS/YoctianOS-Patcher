@@ -15,7 +15,7 @@ Usage: $(basename "$0") [OPTIONS]
 
 Options:
   -h, --help       Show this help and exit.
-  -f, --force      Force copy: copy to *.backup even if it already exists.
+  -f, --force      Force copy: replace existing *.backup targets with source (no nesting).
 EOF
 }
 
@@ -42,14 +42,42 @@ has_mark_out() {
     fi
 }
 
+# Collect candidates
+targets=()
 for src in *; do
     [[ "$src" == *.backup ]] && continue
-    [[ "${src,,}" == "readme.txt" ]] && { echo "Skipping README: '$src'"; continue; }
+    [[ "${src,,}" == "readme.txt" ]] && continue
+    targets+=("$src")
+done
 
+if [ ${#targets[@]} -eq 0 ]; then
+    echo "No eligible files or directories found."
+    exit 0
+fi
+
+echo "The following items will be processed:"
+for t in "${targets[@]}"; do
+    echo "  $t -> ${t}.backup"
+done
+
+# Confirmation prompt
+read -r -p "Proceed with ${#targets[@]} item(s)? [y/N] " answer
+case "$answer" in
+    [yY]|[yY][eE][sS]) ;;
+    *) echo "Operation cancelled."; exit 0 ;;
+esac
+
+# Process each target
+for src in "${targets[@]}"; do
     dest="${src}.backup"
 
     if $FORCE; then
-        if cp -r -- "$src" "$dest"; then
+        if [ -e "$dest" ]; then
+            if ! rm -rf -- "$dest"; then
+                echo "Failed to remove existing backup '$dest'"; continue
+            fi
+        fi
+        if cp -a -- "$src" "$dest"; then
             echo "Forced copy '$src' -> '$dest'"
         else
             echo "Failed to force copy '$src'"
