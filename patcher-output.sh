@@ -45,6 +45,20 @@ is_text_file() {
   grep -Iq . "$f" 2>/dev/null && return 0 || return 1
 }
 
+# helper: is README (case-insensitive, matches names starting with "readme")
+is_readme() {
+  local p="$1"
+  local base
+  base="$(basename "$p")"
+  shopt -s nocasematch
+  if [[ "$base" == readme* ]]; then
+    shopt -u nocasematch
+    return 0
+  fi
+  shopt -u nocasematch
+  return 1
+}
+
 echo "Found at least one '$MARK_OUT' under $EDIT_BASE — starting patch export (edit -> git)..."
 echo "GIT_BASE: $GIT_BASE"
 echo "EDIT_BASE: $EDIT_BASE"
@@ -62,13 +76,11 @@ for project in "$EDIT_BASE"/*; do
     continue
   fi
 
-  # NEW: skip projects that are backups or have a sibling .backup directory
-  # Skip if the project itself ends with .backup
+  # Skip projects that are backups or have a sibling .backup directory
   if [[ "$project_name" == *.backup ]]; then
     echo "Skipping project '$project_name' because it is a .backup directory."
     continue
   fi
-  # Skip if a sibling backup directory exists (e.g., ./edit/foo.backup)
   if [ -d "$EDIT_BASE/${project_name}.backup" ]; then
     echo "Skipping project '$project_name' because sibling '${project_name}.backup' exists."
     continue
@@ -89,6 +101,13 @@ for project in "$EDIT_BASE"/*; do
   # Walk through all files in EDIT_DIR safely, excluding any .git directories at any depth
   while IFS= read -r -d '' edit_file; do
     rel_path="${edit_file#$EDIT_DIR/}"
+
+    # Always skip README files in edit (preserve them)
+    if is_readme "$rel_path"; then
+      echo "Skipping README in edit: $project_name/$rel_path"
+      continue
+    fi
+
     repo_file="$GIT_DIR/$rel_path"
 
     # If repo file does not exist -> create add patch (apply on git will add file)
@@ -187,6 +206,13 @@ for project in "$GIT_BASE"/*; do
   # exclude .git directories when scanning git tree
   while IFS= read -r -d '' git_file; do
     rel_path="${git_file#$GIT_DIR/}"
+
+    # Always skip README files in git when creating delete patches
+    if is_readme "$rel_path"; then
+      echo "Skipping README in git (no delete patch): $project_name/$rel_path"
+      continue
+    fi
+
     edit_file="$EDIT_DIR/$rel_path"
     if [ ! -f "$edit_file" ]; then
       if ! is_text_file "$git_file"; then
