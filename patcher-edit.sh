@@ -37,14 +37,12 @@ fi
 # Build a set to remember which files originally had both markers
 declare -A HAD_BOTH=()
 for f in "${!CANDIDATES[@]}"; do
-  # check membership in both lists
   if grep -qF -- "$MARK_IN" "$f" 2>/dev/null && grep -qF -- "$MARK_OUT" "$f" 2>/dev/null; then
     HAD_BOTH["$(realpath "$f")"]=1
   fi
 done
 
-# 2) Rewrite each file that originally contained MARK_IN (keep lines with MARK_IN, remove marker),
-#    and for files that did not contain MARK_IN but contained MARK_OUT, leave them untouched.
+# 2) Rewrite files that contained MARK_IN
 REWRITTEN_FILES=()
 for f in "${FILES_WITH_IN[@]}"; do
   [ -n "$f" ] || continue
@@ -62,7 +60,6 @@ for f in "${FILES_WITH_IN[@]}"; do
     }
   ' "$f" > "$tmp" || { rm -f "$tmp"; echo "WRITE FAIL: $f"; continue; }
 
-  # preserve perms/owner if possible
   if stat_out=$(stat -c "%a %u %g" "$f" 2>/dev/null); then
     perms=$(echo "$stat_out" | awk '{print $1}'); uid=$(echo "$stat_out" | awk '{print $2}'); gid=$(echo "$stat_out" | awk '{print $3}')
   else
@@ -77,10 +74,7 @@ for f in "${FILES_WITH_IN[@]}"; do
   REWRITTEN_FILES+=("$f")
 done
 
-# 3) Decide which rewritten files to keep:
-#    - If file originally had both markers -> always keep
-#    - Else if file contains at least one line != MARK_OUT after trimming -> keep
-#    - Else -> delete (only MARK_OUT or empty)
+# 3) Decide which rewritten files to keep
 declare -A KEEP_FILE
 declare -A KEEP_DIR
 
@@ -89,10 +83,8 @@ for f in "${REWRITTEN_FILES[@]}"; do
   fr="$(realpath "$f")"
 
   if [ -n "${HAD_BOTH["$fr"]+x}" ]; then
-    # originally had both markers -> keep unconditionally
     KEEP_FILE["$fr"]=1
     echo "KEPT (had both markers): $f"
-    # mark ancestor dirs
     dir="$(dirname "$fr")"
     while true; do
       KEEP_DIR["$dir"]=1
@@ -102,7 +94,6 @@ for f in "${REWRITTEN_FILES[@]}"; do
     continue
   fi
 
-  # otherwise check if file contains any useful line (not exactly MARK_OUT after trim)
   if awk -v OUT="$MARK_OUT" '
       {
         s=$0
@@ -125,15 +116,13 @@ for f in "${REWRITTEN_FILES[@]}"; do
   fi
 done
 
-# 4) Also ensure files that originally had MARK_OUT but were not rewritten are kept
+# 4) Keep files that originally had MARK_OUT but were not rewritten
 for f in "${FILES_WITH_OUT[@]}"; do
   [ -n "$f" ] || continue
   fr="$(realpath "$f")"
-  # if already marked keep, skip
   if [ -n "${KEEP_FILE["$fr"]+x}" ]; then
     continue
   fi
-  # if file was not rewritten (didn't have MARK_IN) but had MARK_OUT originally, keep it
   if grep -qF -- "$MARK_OUT" "$f" 2>/dev/null; then
     KEEP_FILE["$fr"]=1
     echo "KEPT (originally had MARK_OUT): $f"
@@ -146,18 +135,14 @@ for f in "${FILES_WITH_OUT[@]}"; do
   fi
 done
 
-# NEW: Always keep README.txt files (case-insensitive) under EDIT_ROOT
-while IFS= read -r -d '' rfile; do
+# 4.5) Always keep ONLY the top-level README.txt (./edit/README.txt), not subfolders
+if [ -f "$EDIT_ROOT_REAL/README.txt" ]; then
+  rfile="$EDIT_ROOT_REAL/README.txt"
   rreal="$(realpath "$rfile")"
   KEEP_FILE["$rreal"]=1
-  echo "KEPT (README.txt): $rfile"
-  dir="$(dirname "$rreal")"
-  while true; do
-    KEEP_DIR["$dir"]=1
-    [ "$dir" = "$EDIT_ROOT_REAL" ] && break
-    dir="$(dirname "$dir")"
-  done
-done < <(find "$EDIT_ROOT_REAL" -type f -iname 'README.txt' -print0)
+  echo "KEPT (top-level README.txt): $rfile"
+  KEEP_DIR["$EDIT_ROOT_REAL"]=1
+fi
 
 # 5) Delete all files under EDIT_ROOT that are NOT in KEEP_FILE
 while IFS= read -r -d '' file; do
@@ -184,4 +169,4 @@ for dir in "${DIRS[@]}"; do
   rm -rf "$dir" && echo "REMOVED DIR: $dir" || echo "FAILED REMOVE DIR: $dir"
 done
 
-echo "Done. Files that originally contained $MARK_IN or $MARK_OUT, are preserved under $EDIT_ROOT_REAL."
+echo "Done! Files that originally contained $MARK_IN or $MARK_OUT are preserved."

@@ -16,6 +16,17 @@ cd "$EDIT_BASE" || { echo "Directory $EDIT_BASE not found"; exit 1; }
 # Include hidden files; if no match, nullglob prevents literal pattern
 shopt -s dotglob nullglob
 
+has_mark_out() {
+    local p="$1"
+    if [ -f "$p" ]; then
+        grep -qF -- "$MARK_OUT" "$p" 2>/dev/null
+    elif [ -d "$p" ]; then
+        grep -rF --binary-files=text -q -- "$MARK_OUT" "$p" 2>/dev/null
+    else
+        return 1
+    fi
+}
+
 # Loop through entries in the directory
 for src in *; do
     # Skip entries that already end with .backup
@@ -37,24 +48,15 @@ for src in *; do
         continue
     fi
 
-    if [ -f "$src" ]; then
-        # Check if file contains at least one MARK_OUT
-        if grep -qF "$MARK_OUT" "$src"; then
-            if mv -- "$src" "$dest"; then
-                echo "Moved '$src' -> '$dest'"
-            else
-                echo "Failed to move '$src'"
-            fi
+    # Move only if marker exists (file or directory)
+    if has_mark_out "$src"; then
+        if mv -- "$src" "$dest"; then
+            echo "Moved '$src' -> '$dest'"
         else
-            echo "Refused '$src' — no $MARK_OUT found"
+            echo "Failed to move '$src'"
         fi
     else
-        # For directories, just move
-        if mv -- "$src" "$dest"; then
-            echo "Moved directory '$src' -> '$dest'"
-        else
-            echo "Failed to move directory '$src'"
-        fi
+        echo "Refused '$src' — no $MARK_OUT found"
     fi
 done
 
