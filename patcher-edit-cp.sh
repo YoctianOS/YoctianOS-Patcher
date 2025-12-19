@@ -6,14 +6,29 @@ if [ "$EUID" -eq 0 ] || [ -n "$SUDO_USER" ]; then
     exit 1
 fi
 
-# Base directory
 EDIT_BASE="./edit"
 MARK_OUT="##edit-out##"
 
-# Go to base directory
-cd "$EDIT_BASE" || { echo "Directory $EDIT_BASE not found"; exit 1; }
+usage() {
+    cat <<EOF
+Usage: $(basename "$0") [OPTIONS]
 
-# Include hidden files; if no match, nullglob prevents literal pattern
+Options:
+  -h, --help       Show this help and exit.
+  -f, --force      Force copy: copy to *.backup even if it already exists.
+EOF
+}
+
+FORCE=false
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -f|--force) FORCE=true; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) echo "Unknown option: $1"; usage; exit 1 ;;
+    esac
+done
+
+cd "$EDIT_BASE" || { echo "Directory $EDIT_BASE not found"; exit 1; }
 shopt -s dotglob nullglob
 
 has_mark_out() {
@@ -27,28 +42,26 @@ has_mark_out() {
     fi
 }
 
-# Loop through entries in the directory
 for src in *; do
-    # Skip entries that already end with .backup
-    if [[ "$src" == *.backup ]]; then
-        continue
-    fi
-
-    # Skip README.txt (case-insensitive)
-    if [[ "${src,,}" == "readme.txt" ]]; then
-        echo "Skipping README: '$src'"
-        continue
-    fi
+    [[ "$src" == *.backup ]] && continue
+    [[ "${src,,}" == "readme.txt" ]] && { echo "Skipping README: '$src'"; continue; }
 
     dest="${src}.backup"
 
-    # If destination already exists, skip moving
+    if $FORCE; then
+        if cp -r -- "$src" "$dest"; then
+            echo "Forced copy '$src' -> '$dest'"
+        else
+            echo "Failed to force copy '$src'"
+        fi
+        continue
+    fi
+
     if [ -e "$dest" ]; then
         echo "Skipping '$src' — backup already exists ('$dest')"
         continue
     fi
 
-    # Move only if marker exists (file or directory)
     if has_mark_out "$src"; then
         if mv -- "$src" "$dest"; then
             echo "Moved '$src' -> '$dest'"
