@@ -45,20 +45,6 @@ is_text_file() {
   grep -Iq . "$f" 2>/dev/null && return 0 || return 1
 }
 
-# helper: is README (case-insensitive, matches names starting with "readme")
-is_readme() {
-  local p="$1"
-  local base
-  base="$(basename "$p")"
-  shopt -s nocasematch
-  if [[ "$base" == readme* ]]; then
-    shopt -u nocasematch
-    return 0
-  fi
-  shopt -u nocasematch
-  return 1
-}
-
 echo "Found at least one '$MARK_OUT' under $EDIT_BASE — starting patch export (edit -> git)..."
 echo "GIT_BASE: $GIT_BASE"
 echo "EDIT_BASE: $EDIT_BASE"
@@ -69,12 +55,6 @@ echo
 for project in "$EDIT_BASE"/*; do
   [ -d "$project" ] || continue
   project_name=$(basename "$project")
-
-  # Skip top-level .git directory if present
-  if [ "$project_name" = ".git" ]; then
-    echo "Skipping top-level .git in $EDIT_BASE"
-    continue
-  fi
 
   # Skip projects that are backups or have a sibling .backup directory
   if [[ "$project_name" == *.backup ]]; then
@@ -98,16 +78,9 @@ for project in "$EDIT_BASE"/*; do
   mkdir -p "$OUTPUT_DIR"
   echo "Processing project: $project_name"
 
-  # Walk through all files in EDIT_DIR safely, excluding any .git directories at any depth
+  # Walk through all files in EDIT_DIR (no .git or README blacklist)
   while IFS= read -r -d '' edit_file; do
     rel_path="${edit_file#$EDIT_DIR/}"
-
-    # Always skip README files in edit (preserve them)
-    if is_readme "$rel_path"; then
-      echo "Skipping README in edit: $project_name/$rel_path"
-      continue
-    fi
-
     repo_file="$GIT_DIR/$rel_path"
 
     # If repo file does not exist -> create add patch (apply on git will add file)
@@ -179,52 +152,42 @@ for project in "$EDIT_BASE"/*; do
       fi
     fi
 
-  # exclude any .git directories at any depth
-  done < <(find "$EDIT_DIR" -name .git -prune -o -type f -print0)
+  done < <(find "$EDIT_DIR" -type f -print0)
 
   echo "Finished project: $project_name"
   echo
 done
 
-# Detect files present in git but missing in edit and create delete patches
-echo "Scanning for files present in git but missing in edit (will create delete patches)..."
+# Detect files present in git but missing in edit and create delete patches only if MARK_OUT present
+echo "Scanning for files present in git but missing in edit (will create delete patches only if MARK_OUT present)..."
 for project in "$GIT_BASE"/*; do
   [ -d "$project" ] || continue
   project_name=$(basename "$project")
-
-  # Skip top-level .git directory if present
-  if [ "$project_name" = ".git" ]; then
-    echo "Skipping top-level .git in $GIT_BASE"
-    continue
-  fi
 
   GIT_DIR="$GIT_BASE/$project_name"
   EDIT_DIR="$EDIT_BASE/$project_name"
   OUTPUT_DIR="$OUTPUT_BASE/$project_name"
   mkdir -p "$OUTPUT_DIR"
 
-  # exclude .git directories when scanning git tree
   while IFS= read -r -d '' git_file; do
     rel_path="${git_file#$GIT_DIR/}"
-
-    # Always skip README files in git when creating delete patches
-    if is_readme "$rel_path"; then
-      echo "Skipping README in git (no delete patch): $project_name/$rel_path"
-      continue
-    fi
-
     edit_file="$EDIT_DIR/$rel_path"
     if [ ! -f "$edit_file" ]; then
-      if ! is_text_file "$git_file"; then
-        echo "SKIP binary-only-in-git: $project_name/$rel_path"
-        continue
+      # Only create a delete patch if the git file contains the MARK_OUT marker
+      if grep -qF -- "$MARK_OUT" "$git_file" 2>/dev/null; then
+        if ! is_text_file "$git_file"; then
+          echo "SKIP binary-only-in-git: $project_name/$rel_path"
+          continue
+        fi
+        patch_name="$(sanitize "$rel_path").patch"
+        mkdir -p "$(dirname "$OUTPUT_DIR/$patch_name")"
+        diff -u --label "a/$rel_path" --label "b/$rel_path" -- "$git_file" /dev/null > "$OUTPUT_DIR/$patch_name"
+        echo "Patch (delete) created: $OUTPUT_DIR/$patch_name"
+      else
+        echo "Skipping delete patch for $project_name/$rel_path (no $MARK_OUT in git file)"
       fi
-      patch_name="$(sanitize "$rel_path").patch"
-      mkdir -p "$(dirname "$OUTPUT_DIR/$patch_name")"
-      diff -u --label "a/$rel_path" --label "b/$rel_path" -- "$git_file" /dev/null > "$OUTPUT_DIR/$patch_name"
-      echo "Patch (delete) created: $OUTPUT_DIR/$patch_name"
     fi
-  done < <(find "$GIT_DIR" -name .git -prune -o -type f -print0)
+  done < <(find "$GIT_DIR" -type f -print0)
 done
 
 echo "All differences exported as .patch files in $OUTPUT_BASE"
