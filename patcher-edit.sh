@@ -242,4 +242,4 @@ for dir in "${DIRS[@]}"; do
   rm -rf "$dir" && echo "REMOVED DIR: $dir" || echo "FAILED REMOVE DIR: $dir"
 done
 
-echo "Done! Files that originally contained $MARK_IN or $MARK_OUT or selection markers are preserved."
+echo "Done! Files that contained $MARK_OUT are preserved."
