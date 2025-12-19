@@ -146,6 +146,19 @@ for f in "${FILES_WITH_OUT[@]}"; do
   fi
 done
 
+# NEW: Always keep README.txt files (case-insensitive) under EDIT_ROOT
+while IFS= read -r -d '' rfile; do
+  rreal="$(realpath "$rfile")"
+  KEEP_FILE["$rreal"]=1
+  echo "KEPT (README.txt): $rfile"
+  dir="$(dirname "$rreal")"
+  while true; do
+    KEEP_DIR["$dir"]=1
+    [ "$dir" = "$EDIT_ROOT_REAL" ] && break
+    dir="$(dirname "$dir")"
+  done
+done < <(find "$EDIT_ROOT_REAL" -type f -iname 'README.txt' -print0)
+
 # 5) Delete all files under EDIT_ROOT that are NOT in KEEP_FILE
 while IFS= read -r -d '' file; do
   file_real="$(realpath "$file")"
@@ -171,4 +184,4 @@ for dir in "${DIRS[@]}"; do
   rm -rf "$dir" && echo "REMOVED DIR: $dir" || echo "FAILED REMOVE DIR: $dir"
 done
 
-echo "Done. Files that originally contained $MARK_IN or $MARK_OUT (and those that had both) are preserved under $EDIT_ROOT_REAL."
+echo "Done. Files that originally contained $MARK_IN or $MARK_OUT (and those that had both), are preserved under $EDIT_ROOT_REAL."
