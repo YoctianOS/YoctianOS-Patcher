@@ -5,6 +5,8 @@ set -euo pipefail
 EDIT_ROOT="./edit"
 MARK_IN="##edit-in##"
 MARK_OUT="##edit-out##"
+MARK_SEL_START="##+edit-in+##"
+MARK_SEL_END="##-edit-in-##"
 
 # Safety: refuse root
 if [ "$(id -u)" -eq 0 ] || [ -n "${SUDO_USER:-}" ]; then
@@ -17,8 +19,8 @@ fi
 # canonical root
 EDIT_ROOT_REAL="$(realpath "$EDIT_ROOT")"
 
-# 1) Find files that contain MARK_IN and files that contain MARK_OUT (binary-safe, NUL-separated)
-mapfile -d '' FILES_WITH_IN < <(grep -rF --binary-files=text -lZ "$MARK_IN" "$EDIT_ROOT_REAL" 2>/dev/null || true)
+# 1) Find files that contain any IN marker and files that contain MARK_OUT (binary-safe, NUL-separated)
+mapfile -d '' FILES_WITH_IN < <(grep -rF --binary-files=text -lZ -e "$MARK_IN" -e "$MARK_SEL_START" -e "$MARK_SEL_END" "$EDIT_ROOT_REAL" 2>/dev/null || true)
 mapfile -d '' FILES_WITH_OUT < <(grep -rF --binary-files=text -lZ "$MARK_OUT" "$EDIT_ROOT_REAL" 2>/dev/null || true)
 
 # Build union of files to consider (those with IN or OUT)
@@ -28,31 +30,102 @@ for f in "${FILES_WITH_OUT[@]}"; do [ -n "$f" ] && CANDIDATES["$f"]=1; done
 
 # If no candidate files, remove everything under EDIT_ROOT (but keep EDIT_ROOT itself)
 if [ "${#CANDIDATES[@]}" -eq 0 ]; then
-  echo "No files contain $MARK_IN or $MARK_OUT — removing all contents under $EDIT_ROOT_REAL"
+  echo "No files contain $MARK_IN or $MARK_OUT or selection markers — removing all contents under $EDIT_ROOT_REAL"
   find "$EDIT_ROOT_REAL" -mindepth 1 -print0 | xargs -0 -r rm -rf --
   echo "Done."
   exit 0
 fi
 
-# Build a set to remember which files originally had both markers
+# Build a set to remember which files originally had both markers (any IN variant and OUT)
 declare -A HAD_BOTH=()
 for f in "${!CANDIDATES[@]}"; do
-  if grep -qF -- "$MARK_IN" "$f" 2>/dev/null && grep -qF -- "$MARK_OUT" "$f" 2>/dev/null; then
+  if ( grep -qF -- "$MARK_OUT" "$f" 2>/dev/null ) && \
+     ( grep -qF -- "$MARK_IN" "$f" 2>/dev/null || grep -qF -- "$MARK_SEL_START" "$f" 2>/dev/null || grep -qF -- "$MARK_SEL_END" "$f" 2>/dev/null ); then
     HAD_BOTH["$(realpath "$f")"]=1
   fi
 done
 
-# 2) Rewrite files that contained MARK_IN
+# 2) Rewrite files that contained any IN marker (basic or selection)
 REWRITTEN_FILES=()
 for f in "${FILES_WITH_IN[@]}"; do
   [ -n "$f" ] || continue
+
+  # --- Validation pass: ensure selection markers are balanced, ordered, non-nested,
+  # and that no basic MARK_IN appears inside a selection.
+  if grep -qF -- "$MARK_SEL_START" "$f" 2>/dev/null || grep -qF -- "$MARK_SEL_END" "$f" 2>/dev/null; then
+    awk -v SSTART="$MARK_SEL_START" -v SEND="$MARK_SEL_END" -v IN="$MARK_IN" '
+      BEGIN { in_sel = 0; startc = 0; endc = 0 }
+      {
+        line = $0
+        if (index(line, SSTART)) {
+          startc++
+          if (in_sel) {
+            print "ERROR: nested selection start on line " NR > "/dev/stderr"
+            exit 2
+          }
+          in_sel = 1
+        }
+        if (index(line, SEND)) {
+          endc++
+          if (!in_sel) {
+            print "ERROR: selection end before start on line " NR > "/dev/stderr"
+            exit 3
+          }
+          in_sel = 0
+        }
+        if (in_sel && index(line, IN)) {
+          print "ERROR: basic marker " IN " found inside selection on line " NR > "/dev/stderr"
+          exit 4
+        }
+      }
+      END {
+        if (startc != endc) {
+          print "ERROR: unmatched selection markers (start=" startc " end=" endc ")" > "/dev/stderr"
+          exit 5
+        }
+      }
+    ' "$f" || { echo "ERROR: validation failed for $f"; exit 1; }
+  fi
+
   tmp="$(mktemp "${f}.tmp.XXXXXX")" || { echo "mktemp failed for $f"; continue; }
 
-  awk -v IN="$MARK_IN" -v OUT="$MARK_OUT" '
+  # AWK rewrite:
+  # - Remove selection markers literally (no regex interpretation).
+  # - Preserve content between selection markers (selection content kept).
+  # - Remove basic MARK_IN from its line and keep that line.
+  # - All other lines become MARK_OUT.
+  awk -v IN="$MARK_IN" -v SSTART="$MARK_SEL_START" -v SEND="$MARK_SEL_END" -v OUT="$MARK_OUT" '
+    function remove_literal(hay, needle,    pos, before, after, nlen) {
+      pos = index(hay, needle)
+      if (pos == 0) return hay
+      nlen = length(needle)
+      before = (pos>1) ? substr(hay,1,pos-1) : ""
+      after = substr(hay,pos + nlen)
+      return before after
+    }
+    BEGIN { in_sel = 0 }
     {
-      line=$0
-      if (index(line, IN)) {
-        gsub(IN, "", line)
+      line = $0
+      # If line contains selection start
+      if (index(line, SSTART)) {
+        # remove the literal marker
+        line = remove_literal(line, SSTART)
+        print line
+        in_sel = 1
+        next
+      }
+      # If line contains selection end
+      if (index(line, SEND)) {
+        line = remove_literal(line, SEND)
+        print line
+        in_sel = 0
+        next
+      }
+      if (in_sel) {
+        print line
+      } else if (index(line, IN)) {
+        # remove the basic marker literally
+        line = remove_literal(line, IN)
         print line
       } else {
         print OUT
@@ -169,4 +242,4 @@ for dir in "${DIRS[@]}"; do
   rm -rf "$dir" && echo "REMOVED DIR: $dir" || echo "FAILED REMOVE DIR: $dir"
 done
 
-echo "Done! Files that originally contained $MARK_IN or $MARK_OUT are preserved."
+echo "Done! Files that originally contained $MARK_IN or $MARK_OUT or selection markers are preserved."
