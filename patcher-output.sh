@@ -56,34 +56,23 @@ for project in "$EDIT_BASE"/*; do
   [ -d "$project" ] || continue
   project_name=$(basename "$project")
 
-  # Skip projects that are backups or have a sibling .backup directory
-  if [[ "$project_name" == *.backup ]]; then
-    echo "Skipping project '$project_name' because it is a .backup directory."
-    continue
-  fi
-  if [ -d "$EDIT_BASE/${project_name}.backup" ]; then
-    echo "Skipping project '$project_name' because sibling '${project_name}.backup' exists."
-    continue
-  fi
+  # Skip backups
+  [[ "$project_name" == *.backup ]] && { echo "Skipping backup '$project_name'"; continue; }
+  [ -d "$EDIT_BASE/${project_name}.backup" ] && { echo "Skipping '$project_name' (sibling backup exists)"; continue; }
 
   GIT_DIR="$GIT_BASE/$project_name"
   EDIT_DIR="$EDIT_BASE/$project_name"
   OUTPUT_DIR="$OUTPUT_BASE/$project_name"
 
-  if [ ! -d "$GIT_DIR" ]; then
-    echo "No original repo found for $project_name, skipping."
-    continue
-  fi
+  [ -d "$GIT_DIR" ] || { echo "No original repo for $project_name, skipping."; continue; }
 
   mkdir -p "$OUTPUT_DIR"
   echo "Processing project: $project_name"
 
-  # Walk through all files in EDIT_DIR (no .git or README blacklist)
   while IFS= read -r -d '' edit_file; do
     rel_path="${edit_file#$EDIT_DIR/}"
     repo_file="$GIT_DIR/$rel_path"
 
-    # If repo file does not exist -> create add patch (apply on git will add file)
     if [ ! -f "$repo_file" ]; then
       if ! is_text_file "$edit_file"; then
         echo "SKIP binary-only-in-edit: $project_name/$rel_path"
@@ -91,74 +80,52 @@ for project in "$EDIT_BASE"/*; do
       fi
       patch_name="$(sanitize "$rel_path").patch"
       mkdir -p "$(dirname "$OUTPUT_DIR/$patch_name")"
-      diff -u --label "a/$rel_path" --label "b/$rel_path" -- /dev/null "$edit_file" > "$OUTPUT_DIR/$patch_name"
+      # diff returns 1 when files differ; neutralize to avoid set -e abort
+      diff -u --label "a/$rel_path" --label "b/$rel_path" -- /dev/null "$edit_file" > "$OUTPUT_DIR/$patch_name" || true
       echo "Patch (add) created: $OUTPUT_DIR/$patch_name"
       continue
     fi
 
-    # Both exist: build processed target where lines exactly MARK_OUT in edit are replaced by git lines
-    if [ -f "$repo_file" ] && [ -f "$edit_file" ]; then
-      if ! is_text_file "$repo_file" || ! is_text_file "$edit_file"; then
-        echo "SKIP (binary): $project_name/$rel_path"
-        continue
-      fi
-
-      proc="$TMPDIR/processed_$(sanitize "$project_name")_$(sanitize "$rel_path")"
-      mkdir -p "$(dirname "$proc")"
-
-      # Build processed target:
-      # - if edit line trimmed == MARK_OUT -> use git line (preserve git)
-      # - else -> use edit line (apply edit)
-      awk -v OUT="$MARK_OUT" -v G="$repo_file" -v E="$edit_file" '
-        BEGIN {
-          m = 0
-          while ((getline line < G) > 0) { m++; g[m] = line }
-          close(G)
-          n = 0
-          while ((getline line < E) > 0) { n++; e[n] = line }
-          close(E)
-          max = (m > n ? m : n)
-          for (i = 1; i <= max; i++) {
-            el = (i in e) ? e[i] : ""
-            gl = (i in g) ? g[i] : ""
-            sub(/\r$/, "", el)
-            sub(/\r$/, "", gl)
-            t = el
-            sub(/^[ \t]+/, "", t)
-            sub(/[ \t]+$/, "", t)
-            if (t == OUT) {
-              print gl
-            } else {
-              print el
-            }
-          }
-        }
-      ' > "$proc"
-
-      # ensure proc was written
-      if [ ! -s "$proc" ]; then
-        echo "ERROR: processed file is empty for $project_name/$rel_path — skipping"
-        continue
-      fi
-
-      # create patch: IMPORTANT order is git -> processed_target (apply on git to update it)
-      if ! cmp -s -- "$repo_file" "$proc"; then
-        patch_name="$(sanitize "$rel_path").patch"
-        mkdir -p "$(dirname "$OUTPUT_DIR/$patch_name")"
-        diff -u --label "a/$rel_path" --label "b/$rel_path" -- "$repo_file" "$proc" > "$OUTPUT_DIR/$patch_name"
-        echo "Patch (git <- edit) created: $OUTPUT_DIR/$patch_name"
-      else
-        echo "No change for $project_name/$rel_path"
-      fi
+    if ! is_text_file "$repo_file" || ! is_text_file "$edit_file"; then
+      echo "SKIP (binary): $project_name/$rel_path"
+      continue
     fi
 
+    proc="$TMPDIR/processed_$(sanitize "$project_name")_$(sanitize "$rel_path")"
+    mkdir -p "$(dirname "$proc")"
+
+    awk -v OUT="$MARK_OUT" -v G="$repo_file" -v E="$edit_file" '
+      BEGIN {
+        m = 0; while ((getline line < G) > 0) { m++; g[m] = line } close(G)
+        n = 0; while ((getline line < E) > 0) { n++; e[n] = line } close(E)
+        max = (m > n ? m : n)
+        for (i = 1; i <= max; i++) {
+          el = (i in e) ? e[i] : ""
+          gl = (i in g) ? g[i] : ""
+          sub(/\r$/, "", el); sub(/\r$/, "", gl)
+          t = el; sub(/^[ \t]+/, "", t); sub(/[ \t]+$/, "", t)
+          if (t == OUT) { print gl } else { print el }
+        }
+      }
+    ' > "$proc"
+
+    [ -s "$proc" ] || { echo "ERROR: processed file empty for $project_name/$rel_path"; continue; }
+
+    if ! cmp -s -- "$repo_file" "$proc"; then
+      patch_name="$(sanitize "$rel_path").patch"
+      mkdir -p "$(dirname "$OUTPUT_DIR/$patch_name")"
+      # diff returns 1 when files differ; neutralize to avoid set -e abort
+      diff -u --label "a/$rel_path" --label "b/$rel_path" -- "$repo_file" "$proc" > "$OUTPUT_DIR/$patch_name" || true
+      echo "Patch (git <- edit) created: $OUTPUT_DIR/$patch_name"
+    else
+      echo "No change for $project_name/$rel_path"
+    fi
   done < <(find "$EDIT_DIR" -type f -print0)
 
   echo "Finished project: $project_name"
   echo
 done
 
-# Detect files present in git but missing in edit and create delete patches only if MARK_OUT present
 echo "Scanning for files present in git but missing in edit (will create delete patches only if MARK_OUT present)..."
 for project in "$GIT_BASE"/*; do
   [ -d "$project" ] || continue
@@ -173,7 +140,6 @@ for project in "$GIT_BASE"/*; do
     rel_path="${git_file#$GIT_DIR/}"
     edit_file="$EDIT_DIR/$rel_path"
     if [ ! -f "$edit_file" ]; then
-      # Only create a delete patch if the git file contains the MARK_OUT marker
       if grep -qF -- "$MARK_OUT" "$git_file" 2>/dev/null; then
         if ! is_text_file "$git_file"; then
           echo "SKIP binary-only-in-git: $project_name/$rel_path"
@@ -181,7 +147,8 @@ for project in "$GIT_BASE"/*; do
         fi
         patch_name="$(sanitize "$rel_path").patch"
         mkdir -p "$(dirname "$OUTPUT_DIR/$patch_name")"
-        diff -u --label "a/$rel_path" --label "b/$rel_path" -- "$git_file" /dev/null > "$OUTPUT_DIR/$patch_name"
+        # diff returns 1 when files differ; neutralize to avoid set -e abort
+        diff -u --label "a/$rel_path" --label "b/$rel_path" -- "$git_file" /dev/null > "$OUTPUT_DIR/$patch_name" || true
         echo "Patch (delete) created: $OUTPUT_DIR/$patch_name"
       else
         echo "Skipping delete patch for $project_name/$rel_path (no $MARK_OUT in git file)"
