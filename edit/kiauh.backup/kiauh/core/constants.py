@@ -1,0 +1,27 @@
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+GLOBAL_DEPS = ["git", "wget", "curl", "unzip", "dfu-util", "python3-venv"] 
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
+##edit-out##
