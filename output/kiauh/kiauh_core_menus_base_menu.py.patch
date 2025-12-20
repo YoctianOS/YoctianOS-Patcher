@@ -5,7 +5,7 @@
  def print_header() -> None:
      line1 = " [ KIAUH ] "
 -    line2 = "Klipper Installation And Update Helper"
-+    line2 = "Klipper Installation And Update Helper - YoctianOS" 
++    line2 = "Klipper Installation And Update Helper: YoctianOS" 
      line3 = ""
      color = Color.CYAN
      count = 62 - len(str(color)) - len(str(Color.RST))
